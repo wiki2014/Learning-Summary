@@ -1,0 +1,305 @@
+
+
+
+//arch/arm64/kernel/head.S:471:	
+b	start_kernel  //这里跳转到kernel的c语言处理
+
+//Main.c (kernel\msm-3.18\init)	25210	2016-11-22
+asmlinkage __visible void __init start_kernel(void)
+
+	//1.
+	setup_arch(&command_line);
+		//Setup.c (kernel\msm-3.18\arch\arm64\kernel):
+		void __init setup_arch(char **cmdline_p)
+
+			setup_machine_fdt(__fdt_pointer);
+				//A.
+				if (!dt_phys || !early_init_dt_scan(phys_to_virt(dt_phys)))
+
+				//B.
+				machine_name = of_flat_dt_get_machine_name();
+
+	//2.
+	unflatten_device_tree();
+
+//A.
+early_init_dt_scan
+	status = early_init_dt_verify(params)
+
+	early_init_dt_scan_nodes();
+		//.首先去获取/chosen节点下的内容
+		/* Retrieve various information from the /chosen node */
+		of_scan_flat_dt(early_init_dt_scan_chosen, boot_command_line);
+
+		//.初始化root根目录下的信息
+		/* Initialize {size,address}-cells info */
+		of_scan_flat_dt(early_init_dt_scan_root, NULL);
+
+		//. 
+		/* Setup memory, calling early_init_dt_add_memory_arch */
+		of_scan_flat_dt(early_init_dt_scan_memory, NULL);
+
+
+//2.
+//Fdt.c (kernel\msm-3.18\drivers\of)	29922	2016-11-22
+unflatten_device_tree
+	//(1).
+	//参数一：指向device tree在内存中的手地址
+	//参数二：指向根节点  
+	//参数三：函数指针，为struct device_node和struct property结构体分配内存的回调函数（callback）
+	__unflatten_device_tree(initial_boot_params, &of_root,
+				early_init_dt_alloc_memory_arch);
+
+	//(2).让一个指针指向chosen和aliases节点
+	/* Get pointer to "/chosen" and "/aliases" nodes for use everywhere */
+	of_alias_scan(early_init_dt_alloc_memory_arch);
+		void of_alias_scan(void * (*dt_alloc)(u64 size, u64 align))
+			struct property *pp;
+			
+			struct device_node *np;
+			struct alias_prop *ap;
+
+//(1)
+static void __unflatten_device_tree(void *blob,
+			     struct device_node **mynodes, //
+			     void * (*dt_alloc)(u64 size, u64 align))
+{
+	pr_debug(" -> unflatten_device_tree()\n");
+	/* First pass, scan for size */
+	size = (unsigned long)unflatten_dt_node(blob, NULL, &start, NULL, NULL, 0, true);
+
+	/* Second pass, do actual unflattening */
+	start = 0;
+	unflatten_dt_node(blob, mem, &start, NULL, mynodes, 0, false);	
+
+//Alloc and populate a device_node from the flat tree
+//分配内存并从展开的device tree中把device_node节点扇出
+static void * unflatten_dt_node(void *blob,
+				void *mem,
+				int *poffset,
+				struct device_node *dad,
+				struct device_node **nodepp,
+				unsigned long fpsize,
+				bool dryrun)
+{
+
+
+//先来分析struct device_node结构体
+struct device_node {
+	const char *name;
+	const char *type;
+	phandle phandle;
+	const char *full_name;
+
+	struct	property *properties;
+	struct	property *deadprops;	/* removed properties */
+	struct	device_node *parent;
+	struct	device_node *child;
+	struct	device_node *sibling;
+	struct	kobject kobj;
+	unsigned long _flags;
+	void	*data;
+#if defined(CONFIG_SPARC)
+	const char *path_component_name;
+	unsigned int unique_id;
+	struct of_irq_controller *irq_trans;
+#endif
+};
+
+/*platform_device与device_node绑定*/
+
+//Setup.c (kernel\msm-3.18\arch\arm64\kernel)	16333	2016-11-22
+static int __init arm64_device_init(void)
+{
+	of_platform_populate(NULL, of_default_bus_match_table, NULL, NULL);
+	return 0;
+}
+arch_initcall_sync(arm64_device_init);
+
+//先来分析of_default_bus_match_table
+of_default_bus_match_table
+	const struct of_device_id of_default_bus_match_table[] = {
+	{ .compatible = "simple-bus", },
+	{ .compatible = "simple-mfd", },
+#ifdef CONFIG_ARM_AMBA
+	{ .compatible = "arm,amba-bus", },
+#endif /* CONFIG_ARM_AMBA */
+	{} /* Empty terminated list */
+};
+
+//对于dts设备注册，一般用下面的函数来注册。新板子支持应当使用下面函数，而不是of_platform_bus_probe()函数
+//平台驱动注册用platform_driver_register宏来注册。这里你会联想，那device注册岂不是要用platform_device_register？
+//platform_device_register是之前不带dts的设备驱动使用的，现在dts不用这个。
+
+int of_platform_populate(struct device_node *root,
+			const struct of_device_id *matches,
+			const struct of_dev_auxdata *lookup,
+			struct device *parent)
+{
+	//1.获取根节点
+	struct device_node *child;
+	root = root ? of_node_get(root) : of_find_node_by_path("/");
+
+	//2.遍历每一个子节点
+	for_each_child_of_node(root, child) {
+		rc = of_platform_bus_create(child, matches, lookup, parent, true);
+
+	//3.更新device_node flag的标志位
+	of_node_set_flag(root, OF_POPULATED_BUS);
+	
+
+//2.
+//给已经提供的device_node创建一个platform_device结构体，
+//并且可选择性的递归的为所有的子节点创建一个设备
+//dts中展开的节点一般称为device，.c驱动代码中一般称为driver
+
+//Creates a platform_device for the provided device_node, and optionally
+//recursively create devices for all the child nodes.
+static int of_platform_bus_create(struct device_node *bus,
+				  const struct of_device_id *matches,
+				  const struct of_dev_auxdata *lookup,
+				  struct device *parent, bool strict)
+{
+
+	struct platform_device *dev;
+
+	/* Make sure it has a compatible property */
+	if (strict && (!of_get_property(bus, "compatible", NULL)))
+
+	auxdata = of_dev_lookup(lookup, bus);
+
+	//这里的dev是一个platform_device结构体指针，说明下面函数返回的是一个结构体
+	dev = of_platform_device_create_pdata(bus, bus_id, platform_data, parent);
+
+	for_each_child_of_node(bus, child) {
+		pr_debug("   create child: %s\n", child->full_name);
+		rc = of_platform_bus_create(child, matches, lookup, &dev->dev, strict);  //这里是parent的设备，即子设备，和上面还是有区别的
+		if (rc) {
+			of_node_put(child);
+
+	of_node_set_flag(bus, OF_POPULATED_BUS);
+
+of_platform_device_create_pdata(bus, bus_id, platform_data, parent);
+	//Platform.c (kernel\msm-3.18\drivers\of)	16707	2016-11-22
+	static struct platform_device *of_platform_device_create_pdata(
+					struct device_node *np,
+					const char *bus_id,
+					void *platform_data,
+					struct device *parent)
+	{
+		struct platform_device *dev;
+
+		dev = of_device_alloc(np, bus_id, parent);
+
+		dev->dev.bus = &platform_bus_type; //注册的总线设备，用于匹配
+		dev->dev.platform_data = platform_data;
+		of_dma_configure(&dev->dev, dev->dev.of_node);
+		of_msi_configure(&dev->dev, dev->dev.of_node);
+
+		of_device_add(dev);//添加这个dev
+
+//上面是注册platform bus的device，这又如何是和platform bus的driver匹配的呢
+//Platform_device.h (kernel\msm-3.18\include\linux)	10806	2016-11-22
+#define platform_driver_register(drv) \
+	__platform_driver_register(drv, THIS_MODULE)
+
+//register a driver for platform-level devices
+//给平台级的设备注册一个驱动
+
+int __platform_driver_register(struct platform_driver *drv,struct module *owner)
+
+	drv->driver.owner = owner;
+	drv->driver.bus = &platform_bus_type; //总线类型一样
+	
+	//如果具体平台设备的驱动中存在probe函数，
+	//则struct device_driver driver中的probe函数就是platform_drv_probe
+
+	if (drv->probe)
+		drv->driver.probe = platform_drv_probe;
+	if (drv->remove)
+		drv->driver.remove = platform_drv_remove;
+	if (drv->shutdown)
+		drv->driver.shutdown = platform_drv_shutdown;
+
+	return driver_register(&drv->driver);
+
+//下面来分析platform_bus_type
+struct bus_type platform_bus_type = {
+	.name		= "platform",
+	.dev_groups	= platform_dev_groups,
+	.match		= platform_match,  //这里是dev、drv匹配函数
+	.uevent		= platform_uevent,
+	.pm		= &platform_dev_pm_ops,
+};
+EXPORT_SYMBOL_GPL(platform_bus_type);
+
+ //platform_match - bind platform device to platform driver.
+ // @dev: device.
+ // @drv: driver.
+
+platform_match
+
+static int platform_match(struct device *dev, struct device_driver *drv)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct platform_driver *pdrv = to_platform_driver(drv);
+
+	/* When driver_override is set, only bind to the matching driver */
+	if (pdev->driver_override)
+		return !strcmp(pdev->driver_override, drv->name);
+
+	/* Attempt an OF style match first */  //首先尝试OF，即dts中compatible名字与
+	if (of_driver_match_device(dev, drv))
+		return 1;
+
+	/* Then try ACPI style match */
+	if (acpi_driver_match_device(dev, drv))
+		return 1;
+
+	/* Then try to match against the id table */
+	if (pdrv->id_table)
+		return platform_match_id(pdrv->id_table, pdev) != NULL;
+
+	/* fall-back to driver name match */
+	return (strcmp(pdev->name, drv->name) == 0);
+}
+
+//先来分析
+of_driver_match_device(dev, drv)
+/**
+ * of_driver_match_device - Tell if a driver's of_match_table matches a device.
+ * @drv: the device_driver structure to test
+ * @dev: the device structure to match against
+ */
+static inline int of_driver_match_device(struct device *dev, const struct device_driver *drv)
+	//主要是设备的compatible的内容与device_driver的const struct of_device_id	*of_match_table中的内容做匹配
+	//这里加const，意思是内容不能修改
+
+	return of_match_device(drv->of_match_table, dev) != NULL;
+	
+	const struct of_device_id *of_match_device(const struct of_device_id *matches,
+					   const struct device *dev)
+
+		if ((!matches) || (!dev->of_node))
+			return NULL;
+		return of_match_node(matches, dev->of_node);
+
+			const struct of_device_id *match;
+			match = __of_match_node(matches, node);
+
+				for (; matches->name[0] || matches->type[0] || matches->compatible[0]; matches++) {
+					score = __of_device_is_compatible(node, matches->compatible,
+									  matches->type, matches->name);
+		
+							//这里有限匹配compatible
+							/* Compatible match has highest priority */
+							if (compat && compat[0]) {
+								prop = __of_find_property(device, "compatible", NULL);
+					if (score > best_score) {
+						best_match = matches;
+						best_score = score;
+					}
+
+
+
+

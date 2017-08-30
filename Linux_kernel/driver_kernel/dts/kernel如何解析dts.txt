@@ -1,6 +1,5 @@
 
-
-
+一、kernel启动阶段是如何处理dts：
 //arch/arm64/kernel/head.S:471:	
 b	start_kernel  //这里跳转到kernel的c语言处理
 
